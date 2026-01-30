@@ -2,8 +2,10 @@
 [ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"
 [ -f "$HOME/.zshrc" ] && . "$HOME/.zshrc"
 
-# Load Homebrew
-eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" 2>/dev/null || true
+# Load Homebrew (only if installed - it's optional in this image)
+if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
+  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+fi
 
 # nvm is loaded via NVM_DIR in service scripts (see /etc/services.d/moltbot/run)
 

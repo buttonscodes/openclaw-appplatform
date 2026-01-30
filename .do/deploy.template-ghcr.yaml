@@ -1,15 +1,20 @@
+# =============================================================================
+# WORK IN PROGRESS - GHCR container image deployment
+# This file is experimental. Use deploy.template.yaml (builds from source) for now.
+# =============================================================================
 spec:
   name: moltbot
   region: tor
   workers:
     - name: moltbot
-      dockerfile_path: /Dockerfile
-      source_dir: /
+      # Deploy from pre-built GHCR image (faster than building from source)
+      image:
+        registry_type: GHCR
+        registry: ghcr.io
+        repository: bikramkgupta/clawdbot-appplatform
+        tag: latest
       instance_count: 1
-      instance_size_slug: apps-s-1vcpu-0.5gb
-      git:
-        branch: main
-        repo_clone_url: https://github.com/digitalocean-labs/clawdbot-appplatform.git
+      instance_size_slug: apps-s-1vcpu-2gb  # Minimum 2GB required - 1GB causes heap overflow
       envs:
         # Provide your Gradient inference key
         - key: GRADIENT_API_KEY
