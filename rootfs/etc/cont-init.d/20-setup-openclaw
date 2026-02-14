@@ -112,7 +112,16 @@ jq --arg token "$OPENCLAW_GATEWAY_TOKEN" '.gateway.auth.token = $token | .gatewa
 # Without this, the gateway rejects proxy headers and treats all connections as remote,
 # which causes health checks to fail and Control UI token auth to not work
 echo "[generate-config] Adding trustedProxies for DO App Platform"
-jq '.gateway.trustedProxies = "*"' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+jq '.gateway.trustedProxies = ["*"]' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+
+# Resolve GRADIENT_API_KEY template in model provider config
+# The default config uses "${GRADIENT_API_KEY}" as a placeholder; replace with actual env var value
+if [ -n "$GRADIENT_API_KEY" ] && [ "$GRADIENT_API_KEY" != "change-me" ]; then
+  echo "[generate-config] Resolving GRADIENT_API_KEY in model provider config"
+  jq --arg key "$GRADIENT_API_KEY" '.models.providers.gradient.apiKey = $key' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+else
+  echo "[generate-config] WARNING: GRADIENT_API_KEY is not set or is default 'change-me' - AI models will not work"
+fi
 
 # Permissions applied via /etc/digitalocean/permissions.yaml
 
