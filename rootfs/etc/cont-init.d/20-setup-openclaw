@@ -112,7 +112,7 @@ jq --arg token "$OPENCLAW_GATEWAY_TOKEN" '.gateway.auth.token = $token | .gatewa
 # Without this, the gateway rejects proxy headers and treats all connections as remote,
 # which causes health checks to fail and Control UI token auth to not work
 echo "[generate-config] Adding trustedProxies for DO App Platform"
-jq '.gateway.trustedProxies = ["10.0.0.0/8", "172.16.0.0/12"]' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+jq '.gateway.trustedProxies = "*"' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
 
 # Permissions applied via /etc/digitalocean/permissions.yaml
 
