@@ -4,10 +4,8 @@ source /etc/s6-overlay/lib/env-utils.sh
 source_env_prefix OPENCLAW_
 
 echo "[openclaw] Starting openclaw gateway..."
-echo "[openclaw] DEBUG: Current user: $(whoami)"
-echo "[openclaw] DEBUG: openclaw wrapper location: $(which openclaw 2>&1)"
 
-# Show generated config (especially bind and auth)
+# Show generated config
 echo "[openclaw] DEBUG: Config file contents:"
 if [ -f /data/.openclaw/openclaw.json ]; then
     cat /data/.openclaw/openclaw.json
@@ -15,44 +13,34 @@ else
     echo "[openclaw] DEBUG: /data/.openclaw/openclaw.json NOT FOUND"
 fi
 
-echo "[openclaw] DEBUG: Network interfaces:"
-ip addr 2>/dev/null || ifconfig 2>/dev/null || cat /proc/net/if_inet6 2>/dev/null || echo "no network tools available"
-echo "[openclaw] DEBUG: /proc/net/tcp (listening sockets):"
-cat /proc/net/tcp 2>/dev/null | head -5 || echo "no /proc/net/tcp"
-
-echo "[openclaw] DEBUG: Checking if port 18789 is already in use:"
-ss -tlnp 2>/dev/null | grep 18789 || netstat -tlnp 2>/dev/null | grep 18789 || echo "port not in use"
-
 # Allow openclaw to use tailscale
 if [ "${TAILSCALE_ENABLE:-false}" = "true" ]; then
     tailscale set --operator=openclaw
 fi
 
-# Background port checker - monitors if the gateway actually binds
+# Background port checker - monitors ALL listening ports
 (
     for i in $(seq 1 30); do
-        sleep 2
-        if ss -tlnp 2>/dev/null | grep -q 18789; then
-            echo "[openclaw] PORT-CHECK ($((i*2))s): Port 18789 IS listening"
-            break
-        elif [ -f /proc/net/tcp ]; then
-            # 18789 decimal = 0x4965 hex
-            if grep -qi "4965" /proc/net/tcp 2>/dev/null; then
-                echo "[openclaw] PORT-CHECK ($((i*2))s): Port 18789 found in /proc/net/tcp"
-                cat /proc/net/tcp 2>/dev/null
-                break
-            else
-                echo "[openclaw] PORT-CHECK ($((i*2))s): Port 18789 NOT yet listening"
-            fi
-        else
-            echo "[openclaw] PORT-CHECK ($((i*2))s): Cannot check port"
-        fi
+        sleep 3
+        echo "[openclaw] PORT-CHECK ($((i*3))s): All listening ports:"
+        cat /proc/net/tcp 2>/dev/null | awk 'NR>1{split($2,a,":"); port=strtonum("0x"a[2]); if($4=="0A") print "  listening on port " port " (local addr: " a[1] ")"}' 2>/dev/null || echo "  cannot read /proc/net/tcp"
     done
 ) &
 
-echo "[openclaw] DEBUG: About to start gateway directly as openclaw user..."
+# First, discover what gateway options exist
+echo "[openclaw] DEBUG: Running 'openclaw gateway --help':"
+runuser -l openclaw -c '
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+    export PNPM_HOME="$HOME/.local/share/pnpm"
+    export PATH="$PNPM_HOME:$PATH"
+    openclaw gateway --help 2>&1
+' 2>&1
+echo "[openclaw] DEBUG: --help exit code: $?"
 
-# Run gateway directly (NOT via with_env_prefix exec, so we can capture exit code)
+echo "[openclaw] DEBUG: About to start gateway..."
+
+# Run gateway directly as openclaw user
 runuser -l openclaw -c '
     source /etc/s6-overlay/lib/env-utils.sh 2>/dev/null
     source_env_prefix OPENCLAW_ 2>/dev/null
@@ -61,14 +49,10 @@ runuser -l openclaw -c '
     export PNPM_HOME="$HOME/.local/share/pnpm"
     export PATH="$PNPM_HOME:$PATH"
 
-    echo "[openclaw] DEBUG: Running as user: $(whoami)"
-    echo "[openclaw] DEBUG: Real openclaw binary: $(which openclaw)"
-    echo "[openclaw] DEBUG: PNPM openclaw: $PNPM_HOME/openclaw"
-    echo "[openclaw] DEBUG: PATH: $PATH"
-    echo "[openclaw] DEBUG: OPENCLAW_STATE_DIR: $OPENCLAW_STATE_DIR"
-    echo "[openclaw] DEBUG: Node version: $(node --version 2>&1)"
-
     echo "[openclaw] DEBUG: Executing: openclaw gateway --allow-unconfigured"
+    echo "[openclaw] DEBUG: OPENCLAW_STATE_DIR=$OPENCLAW_STATE_DIR"
+    echo "[openclaw] DEBUG: OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN"
+
     openclaw gateway --allow-unconfigured 2>&1
     echo "[openclaw] DEBUG: Gateway process exited with code: $?"
 ' 2>&1
