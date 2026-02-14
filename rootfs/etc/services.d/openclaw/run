@@ -13,34 +13,26 @@ else
     echo "[openclaw] DEBUG: /data/.openclaw/openclaw.json NOT FOUND"
 fi
 
+echo "[openclaw] DEBUG: Network interfaces:"
+ip addr 2>/dev/null || ifconfig 2>/dev/null || echo "no ip/ifconfig available"
+
 # Allow openclaw to use tailscale
 if [ "${TAILSCALE_ENABLE:-false}" = "true" ]; then
     tailscale set --operator=openclaw
 fi
 
-# Background port checker - monitors ALL listening ports
+# Background port checker - monitors ALL listening ports via ss
 (
-    for i in $(seq 1 30); do
-        sleep 3
-        echo "[openclaw] PORT-CHECK ($((i*3))s): All listening ports:"
-        cat /proc/net/tcp 2>/dev/null | awk 'NR>1{split($2,a,":"); port=strtonum("0x"a[2]); if($4=="0A") print "  listening on port " port " (local addr: " a[1] ")"}' 2>/dev/null || echo "  cannot read /proc/net/tcp"
+    for i in $(seq 1 20); do
+        sleep 5
+        echo "[openclaw] PORT-CHECK ($((i*5))s):"
+        ss -tlnp 2>/dev/null || echo "  ss not available"
     done
 ) &
 
-# First, discover what gateway options exist
-echo "[openclaw] DEBUG: Running 'openclaw gateway --help':"
-runuser -l openclaw -c '
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
-    export PNPM_HOME="$HOME/.local/share/pnpm"
-    export PATH="$PNPM_HOME:$PATH"
-    openclaw gateway --help 2>&1
-' 2>&1
-echo "[openclaw] DEBUG: --help exit code: $?"
-
 echo "[openclaw] DEBUG: About to start gateway..."
 
-# Run gateway directly as openclaw user
+# Run gateway directly as openclaw user (no exec, so we capture exit code)
 runuser -l openclaw -c '
     source /etc/s6-overlay/lib/env-utils.sh 2>/dev/null
     source_env_prefix OPENCLAW_ 2>/dev/null
@@ -49,12 +41,15 @@ runuser -l openclaw -c '
     export PNPM_HOME="$HOME/.local/share/pnpm"
     export PATH="$PNPM_HOME:$PATH"
 
-    echo "[openclaw] DEBUG: Executing: openclaw gateway --allow-unconfigured"
+    echo "[openclaw] DEBUG: Running as: $(whoami)"
+    echo "[openclaw] DEBUG: Binary: $(which openclaw)"
+    echo "[openclaw] DEBUG: Node: $(node --version 2>&1)"
     echo "[openclaw] DEBUG: OPENCLAW_STATE_DIR=$OPENCLAW_STATE_DIR"
-    echo "[openclaw] DEBUG: OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN"
 
+    echo "[openclaw] DEBUG: Starting gateway now..."
     openclaw gateway --allow-unconfigured 2>&1
-    echo "[openclaw] DEBUG: Gateway process exited with code: $?"
+    EXIT=$?
+    echo "[openclaw] DEBUG: Gateway exited with code: $EXIT"
 ' 2>&1
 
 EXIT_CODE=$?
