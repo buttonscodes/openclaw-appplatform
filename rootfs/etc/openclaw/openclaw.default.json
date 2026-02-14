@@ -1,7 +1,8 @@
 {
     "gateway": {
         "mode": "local",
-        "bind": "lan",
+        "bind": "custom",
+        "address": "0.0.0.0:18789",
         "controlUi": {
             "allowInsecureAuth": true
         }
