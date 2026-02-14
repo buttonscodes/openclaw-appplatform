@@ -5,55 +5,15 @@ source_env_prefix OPENCLAW_
 
 echo "[openclaw] Starting openclaw gateway..."
 
-# Show generated config
-echo "[openclaw] DEBUG: Config file contents:"
-if [ -f /data/.openclaw/openclaw.json ]; then
-    cat /data/.openclaw/openclaw.json
-else
-    echo "[openclaw] DEBUG: /data/.openclaw/openclaw.json NOT FOUND"
-fi
-
-echo "[openclaw] DEBUG: Network interfaces:"
-ip addr 2>/dev/null || ifconfig 2>/dev/null || echo "no ip/ifconfig available"
-
 # Allow openclaw to use tailscale
 if [ "${TAILSCALE_ENABLE:-false}" = "true" ]; then
     tailscale set --operator=openclaw
 fi
 
-# Background port checker - monitors ALL listening ports via ss
-(
-    for i in $(seq 1 20); do
-        sleep 5
-        echo "[openclaw] PORT-CHECK ($((i*5))s):"
-        ss -tlnp 2>/dev/null || echo "  ss not available"
-    done
-) &
-
-echo "[openclaw] DEBUG: About to start gateway..."
-
-# Run gateway directly as openclaw user (no exec, so we capture exit code)
-runuser -l openclaw -c '
-    source /etc/s6-overlay/lib/env-utils.sh 2>/dev/null
-    source_env_prefix OPENCLAW_ 2>/dev/null
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
-    export PNPM_HOME="$HOME/.local/share/pnpm"
-    export PATH="$PNPM_HOME:$PATH"
-
-    echo "[openclaw] DEBUG: Running as: $(whoami)"
-    echo "[openclaw] DEBUG: Binary: $(which openclaw)"
-    echo "[openclaw] DEBUG: Node: $(node --version 2>&1)"
-    echo "[openclaw] DEBUG: OPENCLAW_STATE_DIR=$OPENCLAW_STATE_DIR"
-
-    echo "[openclaw] DEBUG: Starting gateway now..."
-    openclaw gateway --allow-unconfigured 2>&1
-    EXIT=$?
-    echo "[openclaw] DEBUG: Gateway exited with code: $EXIT"
-' 2>&1
-
+# Run gateway with stderr captured, in foreground
+with_env_prefix --user openclaw OPENCLAW_ -- openclaw gateway --allow-unconfigured 2>&1
 EXIT_CODE=$?
-echo "[openclaw] DEBUG: runuser exited with code: $EXIT_CODE"
+echo "[openclaw] Gateway exited with code: $EXIT_CODE"
 
 # If gateway exits, sleep before restart to avoid rapid restart loop
 sleep 5
