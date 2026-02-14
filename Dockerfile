@@ -89,6 +89,7 @@ RUN set -eux; \
   rm -rf /var/lib/apt/lists/*
 
 # Apply rootfs overlay early - allows user creation to use existing home directories
+ARG CACHE_BUST=1
 COPY rootfs/ /
 
 # Apply build-time permissions from config
