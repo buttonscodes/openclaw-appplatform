@@ -16,8 +16,12 @@ persist_env_var NTFY_ \
 
 if [ "${COST_WATCHDOG_ENABLE:-false}" = "true" ]; then
   echo "[setup-cost-watchdog] Cost watchdog enabled"
-  [ -z "$DO_API_TOKEN" ] && echo "[setup-cost-watchdog] WARNING: DO_API_TOKEN not set, watchdog will fail"
-  [ -z "$NTFY_TOPIC" ] && echo "[setup-cost-watchdog] WARNING: NTFY_TOPIC not set, notifications will be logged only"
+  if [ -z "$DO_API_TOKEN" ]; then
+    echo "[setup-cost-watchdog] WARNING: DO_API_TOKEN not set, watchdog will fail"
+  fi
+  if [ -z "$NTFY_TOPIC" ]; then
+    echo "[setup-cost-watchdog] WARNING: NTFY_TOPIC not set, notifications will be logged only"
+  fi
 else
   echo "[setup-cost-watchdog] Cost watchdog disabled"
 fi
