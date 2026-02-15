@@ -1,0 +1,41 @@
+# Cost Watchdog Configuration
+# Monitors DigitalOcean billing and stops the gateway if budget is exceeded.
+# Enable via COST_WATCHDOG_ENABLE=true environment variable.
+# Requires: DO_API_TOKEN, NTFY_TOPIC
+
+# Maximum monthly budget in USD. Gateway stops when this is exceeded.
+max_budget: 100.00
+
+# How often to check billing (seconds). Default: 300 (5 minutes).
+check_interval_seconds: 300
+
+# Notification thresholds. Each fires once per billing cycle.
+# Types:
+#   percent  - percentage of max_budget (e.g., 50 = 50%)
+#   absolute - fixed dollar amount (e.g., 10 = $10.00)
+# Priority values: min, low, default, high, urgent (ntfy.sh priorities)
+thresholds:
+  - type: absolute
+    value: 10
+    priority: low
+    message: "Spending has reached $10"
+
+  - type: percent
+    value: 50
+    priority: default
+    message: "Spending has reached 50% of monthly budget"
+
+  - type: percent
+    value: 75
+    priority: high
+    message: "Spending has reached 75% of monthly budget"
+
+  - type: percent
+    value: 90
+    priority: urgent
+    message: "Warning: spending at 90% of monthly budget"
+
+# State file for tracking which thresholds have been notified.
+# Resets automatically on month rollover. Ephemeral (/tmp) is fine;
+# re-notification after container restart is acceptable.
+state_file: /tmp/cost-watchdog-state.json

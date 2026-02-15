@@ -47,6 +47,36 @@ permissions:
     group: root
     mode: "0640"
 
+  # DO_ env directory (contains DO_API_TOKEN - root only)
+  - path: /run/s6/container_environment/DO_
+    user: root
+    group: root
+    mode: "0750"
+  - path: /run/s6/container_environment/DO_/*
+    user: root
+    group: root
+    mode: "0640"
+
+  # NTFY_ env directory
+  - path: /run/s6/container_environment/NTFY_
+    user: root
+    group: root
+    mode: "0750"
+  - path: /run/s6/container_environment/NTFY_/*
+    user: root
+    group: root
+    mode: "0640"
+
+  # COST_WATCHDOG_ env directory
+  - path: /run/s6/container_environment/COST_WATCHDOG_
+    user: root
+    group: root
+    mode: "0750"
+  - path: /run/s6/container_environment/COST_WATCHDOG_/*
+    user: root
+    group: root
+    mode: "0640"
+
   # OpenClaw state directory
   - path: /data/.openclaw
     user: openclaw

@@ -1,0 +1,228 @@
+#!/bin/bash
+# Cost watchdog - single check execution
+# Queries DO billing API, sends notifications at thresholds, stops gateway if over budget.
+
+set -e
+trap 'log "ERROR: Script failed at line $LINENO"' ERR
+
+# Load env vars from s6 prefix directories
+source /etc/s6-overlay/lib/env-utils.sh
+source_env_prefix DO_
+source_env_prefix NTFY_
+source_env_prefix COST_WATCHDOG_
+
+CONFIG_FILE="${COST_WATCHDOG_CONFIG_FILE:-/etc/digitalocean/cost-watchdog.yaml}"
+QUIET=""
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --quiet|-q) QUIET=1; shift ;;
+    *) shift ;;
+  esac
+done
+
+log() {
+  [ -z "$QUIET" ] && echo "[cost-watchdog] $1"
+}
+
+# Validate that a value is a non-negative number (integer or decimal)
+is_numeric() {
+  echo "$1" | grep -qE '^[0-9]+\.?[0-9]*$'
+}
+
+# --- Validate prerequisites ---
+
+if [ -z "$DO_API_TOKEN" ]; then
+  log "ERROR: DO_API_TOKEN not set"
+  exit 1
+fi
+
+if [ -z "$NTFY_TOPIC" ]; then
+  log "WARNING: NTFY_TOPIC not set, notifications will be logged only"
+fi
+
+if [ ! -f "$CONFIG_FILE" ]; then
+  log "ERROR: Config file not found: $CONFIG_FILE"
+  exit 1
+fi
+
+# --- Read config ---
+
+MAX_BUDGET=$(yq -r '.max_budget // 100' "$CONFIG_FILE")
+STATE_FILE=$(yq -r '.state_file // "/tmp/cost-watchdog-state.json"' "$CONFIG_FILE")
+THRESHOLD_COUNT=$(yq -r '.thresholds | length' "$CONFIG_FILE")
+
+if ! is_numeric "$MAX_BUDGET" || [ "$(awk -v v="$MAX_BUDGET" 'BEGIN { print (v <= 0) ? 1 : 0 }')" = "1" ]; then
+  log "ERROR: max_budget must be a positive number, got: '$MAX_BUDGET'"
+  exit 1
+fi
+
+# --- Query DO billing API ---
+
+log "Checking billing (max budget: \$${MAX_BUDGET})..."
+
+HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" \
+  -H "Authorization: Bearer $DO_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "https://api.digitalocean.com/v2/customers/my/balance" 2>/dev/null) || {
+  log "WARNING: Failed to reach billing API (curl error), skipping check"
+  exit 0
+}
+
+HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -1)
+HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" != "200" ]; then
+  log "WARNING: Billing API returned HTTP $HTTP_CODE, skipping check"
+  exit 0
+fi
+
+MTD_USAGE=$(echo "$HTTP_BODY" | jq -r '.month_to_date_usage // empty')
+
+if [ -z "$MTD_USAGE" ]; then
+  log "WARNING: Could not parse month_to_date_usage from API response, skipping"
+  exit 0
+fi
+
+if ! is_numeric "$MTD_USAGE"; then
+  log "ERROR: month_to_date_usage is not numeric: '$MTD_USAGE', skipping"
+  exit 0
+fi
+
+log "Month-to-date usage: \$${MTD_USAGE}"
+
+# --- Load/initialize state ---
+
+CURRENT_MONTH=$(date +%Y-%m)
+
+# State file format: { "month": "2026-02", "notified": [0, 2], "gateway_stopped": false }
+if [ -f "$STATE_FILE" ]; then
+  STATE_MONTH=$(jq -r '.month // ""' "$STATE_FILE" 2>/dev/null || echo "")
+  if [ "$STATE_MONTH" != "$CURRENT_MONTH" ]; then
+    log "Month rolled over ($STATE_MONTH -> $CURRENT_MONTH), resetting state"
+    echo "{\"month\":\"$CURRENT_MONTH\",\"notified\":[],\"gateway_stopped\":false}" > "$STATE_FILE"
+  fi
+else
+  log "Initializing state file"
+  echo "{\"month\":\"$CURRENT_MONTH\",\"notified\":[],\"gateway_stopped\":false}" > "$STATE_FILE"
+fi
+
+GATEWAY_STOPPED=$(jq -r '.gateway_stopped // false' "$STATE_FILE" 2>/dev/null || echo "false")
+
+is_notified() {
+  jq -e --argjson idx "$1" '.notified | index($idx) != null' "$STATE_FILE" >/dev/null 2>&1
+}
+
+send_notification() {
+  local title="$1" message="$2" priority="${3:-default}"
+
+  if [ -z "$NTFY_TOPIC" ]; then
+    log "Notification (no topic): $title - $message"
+    return 0
+  fi
+
+  curl -s \
+    -H "Title: $title" \
+    -H "Priority: $priority" \
+    -H "Tags: dollar,warning" \
+    -d "$message" \
+    "https://ntfy.sh/$NTFY_TOPIC" >/dev/null 2>&1 || {
+    log "WARNING: Failed to send ntfy notification"
+  }
+
+  log "Notification sent: $title ($priority)"
+}
+
+mark_notified() {
+  local tmp
+  tmp=$(mktemp "${STATE_FILE}.XXXXXX")
+  jq --argjson idx "$1" '.notified += [$idx] | .notified |= unique' "$STATE_FILE" > "$tmp" \
+    && mv "$tmp" "$STATE_FILE"
+}
+
+mark_gateway_stopped() {
+  local tmp
+  tmp=$(mktemp "${STATE_FILE}.XXXXXX")
+  jq '.gateway_stopped = true' "$STATE_FILE" > "$tmp" \
+    && mv "$tmp" "$STATE_FILE"
+}
+
+# --- Check thresholds ---
+
+if [ "$THRESHOLD_COUNT" -gt 0 ] 2>/dev/null; then
+  for i in $(seq 0 $((THRESHOLD_COUNT - 1))); do
+    if is_notified "$i"; then
+      continue
+    fi
+
+    THRESH_TYPE=$(yq -r ".thresholds[$i].type" "$CONFIG_FILE")
+    THRESH_VALUE=$(yq -r ".thresholds[$i].value" "$CONFIG_FILE")
+    THRESH_PRIORITY=$(yq -r ".thresholds[$i].priority // \"default\"" "$CONFIG_FILE")
+    THRESH_MESSAGE=$(yq -r ".thresholds[$i].message // \"Threshold crossed\"" "$CONFIG_FILE")
+
+    if ! is_numeric "$THRESH_VALUE"; then
+      log "WARNING: Non-numeric threshold value '$THRESH_VALUE' at index $i, skipping"
+      continue
+    fi
+
+    case "$THRESH_TYPE" in
+      percent)
+        TRIGGER_AMOUNT=$(awk -v budget="$MAX_BUDGET" -v pct="$THRESH_VALUE" 'BEGIN { printf "%.2f", budget * pct / 100 }')
+        ;;
+      absolute)
+        TRIGGER_AMOUNT=$(awk -v val="$THRESH_VALUE" 'BEGIN { printf "%.2f", val }')
+        ;;
+      *)
+        log "WARNING: Unknown threshold type '$THRESH_TYPE' at index $i, skipping"
+        continue
+        ;;
+    esac
+
+    CROSSED=$(awk -v usage="$MTD_USAGE" -v trigger="$TRIGGER_AMOUNT" 'BEGIN { print (usage >= trigger) ? 1 : 0 }')
+
+    if [ "$CROSSED" = "1" ]; then
+      log "Threshold $i crossed: \$${MTD_USAGE} >= \$${TRIGGER_AMOUNT}"
+      send_notification \
+        "OpenClaw Cost Alert" \
+        "${THRESH_MESSAGE} (current: \$${MTD_USAGE} / \$${MAX_BUDGET})" \
+        "$THRESH_PRIORITY"
+      mark_notified "$i"
+    fi
+  done
+fi
+
+# --- Check max budget ---
+
+OVER_BUDGET=$(awk -v usage="$MTD_USAGE" -v budget="$MAX_BUDGET" 'BEGIN { print (usage >= budget) ? 1 : 0 }')
+
+if [ "$OVER_BUDGET" = "1" ]; then
+  log "BUDGET EXCEEDED: \$${MTD_USAGE} >= \$${MAX_BUDGET}"
+
+  GATEWAY_STATUS=$(/command/s6-svstat /run/service/openclaw 2>/dev/null || echo "unknown")
+
+  if echo "$GATEWAY_STATUS" | grep -q "^up"; then
+    log "Stopping openclaw gateway service..."
+    /command/s6-svc -d /run/service/openclaw
+
+    send_notification \
+      "OpenClaw SHUTDOWN - Budget Exceeded" \
+      "Monthly spending \$${MTD_USAGE} exceeded budget \$${MAX_BUDGET}. Gateway has been stopped." \
+      "urgent"
+
+    mark_gateway_stopped
+  else
+    if [ "$GATEWAY_STOPPED" != "true" ]; then
+      send_notification \
+        "OpenClaw Budget Exceeded" \
+        "Monthly spending \$${MTD_USAGE} exceeded budget \$${MAX_BUDGET}. Gateway is already stopped." \
+        "urgent"
+      mark_gateway_stopped
+    else
+      log "Gateway already stopped, no duplicate notification"
+    fi
+  fi
+else
+  log "Under budget: \$${MTD_USAGE} / \$${MAX_BUDGET}"
+fi
+
+log "Check complete"

@@ -1,0 +1,33 @@
+#!/bin/bash
+# Cost watchdog periodic service
+# Monitors DigitalOcean billing and stops gateway if budget exceeded
+source /etc/s6-overlay/lib/env-utils.sh
+source_env_prefix DO_
+source_env_prefix NTFY_
+source_env_prefix COST_WATCHDOG_
+
+# Skip if not enabled
+if [ "${COST_WATCHDOG_ENABLE:-false}" != "true" ]; then
+  echo "[cost-watchdog] Disabled (set COST_WATCHDOG_ENABLE=true to enable)"
+  s6-svc -Od .
+  exit 0
+fi
+
+# Skip if DO_API_TOKEN not set
+if [ -z "$DO_API_TOKEN" ]; then
+  echo "[cost-watchdog] ERROR: COST_WATCHDOG_ENABLE=true but DO_API_TOKEN not set"
+  s6-svc -Od .
+  exit 1
+fi
+
+CONFIG_FILE="${COST_WATCHDOG_CONFIG_FILE:-/etc/digitalocean/cost-watchdog.yaml}"
+CHECK_INTERVAL=$(yq -r '.check_interval_seconds // 300' "$CONFIG_FILE")
+echo "[cost-watchdog] Starting cost watchdog loop (every ${CHECK_INTERVAL}s)..."
+
+# Run first check immediately (don't wait for interval)
+/usr/local/bin/cost-watchdog-check || true
+
+while true; do
+  sleep "$CHECK_INTERVAL"
+  /usr/local/bin/cost-watchdog-check || true
+done

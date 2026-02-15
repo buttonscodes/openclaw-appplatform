@@ -1,0 +1,23 @@
+#!/command/with-contenv bash
+# Setup cost watchdog environment variables
+source /etc/s6-overlay/lib/env-utils.sh
+
+# Persist DO_ prefix vars (includes DO_API_TOKEN)
+persist_env_prefix DO_
+
+# Persist cost-watchdog-specific vars
+persist_env_var COST_WATCHDOG_ \
+  COST_WATCHDOG_ENABLE="${COST_WATCHDOG_ENABLE:-false}" \
+  COST_WATCHDOG_CONFIG_FILE="/etc/digitalocean/cost-watchdog.yaml"
+
+# Persist NTFY_ vars
+persist_env_var NTFY_ \
+  NTFY_TOPIC="${NTFY_TOPIC:-}"
+
+if [ "${COST_WATCHDOG_ENABLE:-false}" = "true" ]; then
+  echo "[setup-cost-watchdog] Cost watchdog enabled"
+  [ -z "$DO_API_TOKEN" ] && echo "[setup-cost-watchdog] WARNING: DO_API_TOKEN not set, watchdog will fail"
+  [ -z "$NTFY_TOPIC" ] && echo "[setup-cost-watchdog] WARNING: NTFY_TOPIC not set, notifications will be logged only"
+else
+  echo "[setup-cost-watchdog] Cost watchdog disabled"
+fi

@@ -45,6 +45,7 @@ The container uses [s6-overlay](https://github.com/just-containers/s6-overlay) f
 - `sshd/` - SSH server (if SSH_ENABLE=true)
 - `backup/` - Periodic Restic backup service (if ENABLE_SPACES=true)
 - `prune/` - Periodic Restic snapshot cleanup (if ENABLE_SPACES=true)
+- `cost-watchdog/` - Cost monitoring and auto-shutdown (if COST_WATCHDOG_ENABLE=true)
 - `crond/` - Cron daemon for scheduled tasks
 
 Users can add custom init scripts (prefix with `30-` or higher) and custom services.
@@ -62,6 +63,21 @@ All gateway settings are driven by the config file (`openclaw.json`). The init s
 
 - Tailscale serve mode for networking
 - Gradient AI provider (if `GRADIENT_API_KEY` set)
+
+## Cost Watchdog
+
+Monitors DigitalOcean month-to-date billing and stops the gateway when spending exceeds the configured budget.
+
+**How it works:**
+
+- Polls DO billing API every 5 minutes (configurable)
+- Sends push notifications via ntfy.sh at configurable thresholds (absolute or percentage)
+- Stops the openclaw gateway service when max budget is exceeded
+- Each threshold fires once per billing cycle (resets monthly)
+
+**Required env vars:** `DO_API_TOKEN`, `NTFY_TOPIC`, `COST_WATCHDOG_ENABLE=true`
+
+**Customizing:** Edit `rootfs/etc/digitalocean/cost-watchdog.yaml` to change budget, intervals, and thresholds.
 
 ## Gradient AI Integration
 
