@@ -8,6 +8,10 @@
 source /etc/s6-overlay/lib/env-utils.sh
 source_env_prefix OPENCLAW_
 
+# Build quoted argument string (empty if no args, avoids printf '%q' empty-arg bug)
+ARGS=""
+[ $# -gt 0 ] && ARGS="$(printf ' %q' "$@")"
+
 # Run directly if already openclaw user, otherwise switch user
 if [ "$(id -un)" = "openclaw" ]; then
   export NVM_DIR="$HOME/.nvm"
@@ -16,7 +20,7 @@ if [ "$(id -un)" = "openclaw" ]; then
   export PATH="$PNPM_HOME:$PATH"
   exec "$PNPM_HOME/openclaw" "$@"
 elif [ "$(id -u)" = "0" ]; then
-  exec su - openclaw -c "openclaw$(printf ' %q' "$@")"
+  exec su - openclaw -c "openclaw${ARGS}"
 else
-  exec sudo -u openclaw bash -l -c "openclaw$(printf ' %q' "$@")"
+  exec sudo -u openclaw bash -l -c "openclaw${ARGS}"
 fi
