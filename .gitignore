@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# DigitalOcean exported app spec (can include secret references / deployment metadata)
+app-spec.yaml
+
 # Local development
 temp/
 
